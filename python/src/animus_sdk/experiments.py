@@ -40,6 +40,13 @@ def _validate_timeout(timeout_seconds: float) -> float:
     return value
 
 
+def _validate_limit(value: int, *, maximum: int = 500) -> int:
+    limit = int(value)
+    if limit < 1 or limit > maximum:
+        raise ValueError(f"limit must be between 1 and {maximum}")
+    return limit
+
+
 def _canonical_json_bytes(payload: object) -> bytes:
     try:
         return json.dumps(
@@ -64,6 +71,10 @@ def compute_ci_webhook_signature(secret: str, ts: str, method: str, body: bytes)
 
 
 class ExperimentsClient:
+    """Client for the DataLab Experiments API (contract 0.3.x)."""
+
+    CONTRACT_VERSION = "0.3"
+
     def __init__(
         self,
         *,
@@ -108,9 +119,7 @@ class ExperimentsClient:
         return _expect_json_object(out)
 
     def list_experiments(self, *, limit: int = 100, name: str | None = None) -> dict[str, object]:
-        if limit <= 0:
-            raise ValueError("limit must be > 0")
-        query: dict[str, object] = {"limit": int(limit)}
+        query: dict[str, object] = {"limit": _validate_limit(limit)}
         if name:
             query["name"] = name
         url = build_url(self._gateway_url, "api", "experiments", "experiments", query=query)
@@ -121,6 +130,49 @@ class ExperimentsClient:
             timeout_seconds=self._timeout_seconds,
         )
         return _expect_json_object(out)
+
+    def get_experiment(self, *, experiment_id: str) -> dict[str, object]:
+        url = build_url(
+            self._gateway_url,
+            "api",
+            "experiments",
+            "experiments",
+            _require_text(experiment_id, field="experiment_id"),
+        )
+        return _expect_json_object(
+            request_json("GET", url, auth_token=self._auth_token, timeout_seconds=self._timeout_seconds)
+        )
+
+    def list_experiment_runs(self, *, experiment_id: str, limit: int = 100) -> dict[str, object]:
+        url = build_url(
+            self._gateway_url,
+            "api",
+            "experiments",
+            "experiments",
+            _require_text(experiment_id, field="experiment_id"),
+            "runs",
+            query={"limit": _validate_limit(limit)},
+        )
+        return _expect_json_object(
+            request_json("GET", url, auth_token=self._auth_token, timeout_seconds=self._timeout_seconds)
+        )
+
+    def list_runs(
+        self,
+        *,
+        limit: int = 100,
+        status: str | None = None,
+        active: bool | None = None,
+    ) -> dict[str, object]:
+        query: dict[str, object] = {"limit": _validate_limit(limit)}
+        if status is not None:
+            query["status"] = _require_text(status, field="status")
+        if active is not None:
+            query["active"] = "true" if bool(active) else "false"
+        url = build_url(self._gateway_url, "api", "experiments", "experiment-runs", query=query)
+        return _expect_json_object(
+            request_json("GET", url, auth_token=self._auth_token, timeout_seconds=self._timeout_seconds)
+        )
 
     def create_run(
         self,
@@ -234,6 +286,36 @@ class ExperimentsClient:
         )
         return _expect_json_object(out)
 
+    def dispatch_run(
+        self,
+        *,
+        project_id: str,
+        run_id: str,
+        idempotency_key: str | None = None,
+    ) -> dict[str, object]:
+        """Dispatch an existing run to the Data Plane using the canonical 0.3 API."""
+        body: dict[str, object] = {}
+        if idempotency_key is not None:
+            body["idempotencyKey"] = _require_text(idempotency_key, field="idempotency_key")
+        url = build_url(
+            self._gateway_url,
+            "api",
+            "experiments",
+            "projects",
+            _require_text(project_id, field="project_id"),
+            "runs",
+            f"{_require_text(run_id, field='run_id')}:dispatch",
+        )
+        return _expect_json_object(
+            request_json(
+                "POST",
+                url,
+                json_body=body,
+                auth_token=self._auth_token,
+                timeout_seconds=self._timeout_seconds,
+            )
+        )
+
     def execute_run(
         self,
         *,
@@ -246,6 +328,7 @@ class ExperimentsClient:
         params: dict[str, object] | None = None,
         resources: dict[str, object] | None = None,
     ) -> dict[str, object]:
+        """Legacy compatibility endpoint. Prefer create_run() + dispatch_run()."""
         body: dict[str, object] = {
             "experiment_id": _require_text(experiment_id, field="experiment_id"),
             "dataset_version_id": _require_text(dataset_version_id, field="dataset_version_id"),
@@ -278,6 +361,55 @@ class ExperimentsClient:
         )
         return _expect_json_object(out)
 
+    def get_run_execution(self, *, run_id: str) -> dict[str, object]:
+        url = build_url(
+            self._gateway_url,
+            "api",
+            "experiments",
+            "experiment-runs",
+            _require_text(run_id, field="run_id"),
+            "execution",
+        )
+        return _expect_json_object(
+            request_json("GET", url, auth_token=self._auth_token, timeout_seconds=self._timeout_seconds)
+        )
+
+    def get_run_build_context(self, *, run_id: str) -> dict[str, object]:
+        url = build_url(
+            self._gateway_url,
+            "api",
+            "experiments",
+            "experiment-runs",
+            _require_text(run_id, field="run_id"),
+            "build-context",
+        )
+        return _expect_json_object(
+            request_json("GET", url, auth_token=self._auth_token, timeout_seconds=self._timeout_seconds)
+        )
+
+    def list_run_metrics(
+        self,
+        *,
+        run_id: str,
+        name: str | None = None,
+        limit: int = 1000,
+    ) -> dict[str, object]:
+        query: dict[str, object] = {"limit": _validate_limit(limit, maximum=1000)}
+        if name:
+            query["name"] = name
+        url = build_url(
+            self._gateway_url,
+            "api",
+            "experiments",
+            "experiment-runs",
+            _require_text(run_id, field="run_id"),
+            "metrics",
+            query=query,
+        )
+        return _expect_json_object(
+            request_json("GET", url, auth_token=self._auth_token, timeout_seconds=self._timeout_seconds)
+        )
+
     def list_run_artifacts(
         self,
         *,
@@ -286,9 +418,7 @@ class ExperimentsClient:
         limit: int = 200,
     ) -> dict[str, object]:
         run = _require_text(run_id, field="run_id")
-        if limit <= 0:
-            raise ValueError("limit must be > 0")
-        query: dict[str, object] = {"limit": int(limit)}
+        query: dict[str, object] = {"limit": _validate_limit(limit)}
         if kind:
             query["kind"] = kind
         url = build_url(
