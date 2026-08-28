@@ -1,37 +1,19 @@
 <p align="center">
-  <img src="assets/banner.png" width="100%" alt="Animus Memory Core">
+  <img src="https://raw.githubusercontent.com/grewanderer/animus-datalab-sdk/main/assets/banner.png" width="100%" alt="Animus DataLab">
 </p>
 
-<h1 align="center">Animus DataPilot</h1>
-<p align="center">
-  <em>Deterministic control plane for enterprise ML datasets, experiments, and lineage</em>
-</p>
+# Animus DataLab Python SDK
 
-<p align="center">
-  <img src="https://img.shields.io/badge/status-production--ready-0f172a?style=flat-square">
-  <img src="https://img.shields.io/badge/deployment-on--prem--first-0f172a?style=flat-square">
-  <img src="https://img.shields.io/badge/network-air--gapped--compatible-0f172a?style=flat-square">
-  <img src="https://img.shields.io/badge/python-3.9+-0f172a?style=flat-square">
-</p>
+Production-oriented, typed Python SDK for **Animus DataPilot** dataset, experiment, CI provenance, artifact, and live-training telemetry APIs.
 
----
+## Design goals
 
-## Overview
-
-This directory contains the **Python SDK** used by **CI systems and ML pipelines** to publish metadata to **Animus DataPilot**.
-
-The SDK is intentionally minimal and deterministic, designed for:
-
-* CI-driven experiment registration
-* immutable experiment runs
-* dataset version binding
-* signed CI image attestation (git + image digest)
-* live telemetry from training containers
-* artifact registration from training and evaluation jobs
-
-It is suitable for **on‑prem**, **air‑gapped**, and **non‑interactive** environments.
-
----
+- **Zero runtime dependencies** by default: deploy cleanly into CI, training images, on-prem, and air-gapped environments.
+- **Bounded and integrity-aware I/O**: streaming uploads/downloads, atomic downloads, optional SHA-256 verification, bounded JSON/error bodies.
+- **Predictable failure semantics**: normalized `AnimusAPIError`, stable request IDs, explicit validation instead of optimization-removable `assert` checks.
+- **Typed distribution**: PEP 561 `py.typed` marker and Python 3.10-3.14 compatibility.
+- **Non-blocking telemetry**: bounded background queue, retry with jitter, stable request IDs across retries, and observable delivery counters.
+- **Supply-chain ready**: build verification on every change and PyPI Trusted Publishing/attestations on release.
 
 ## Install
 
@@ -39,74 +21,68 @@ It is suitable for **on‑prem**, **air‑gapped**, and **non‑interactive** en
 pip install animus-datalab
 ```
 
-### Local development
+Development from the repository root:
 
 ```bash
-pip install -e python
+python -m pip install -e "python[dev]"
 ```
 
-### Local development (from the Animus monorepo root)
+## Unified client
 
-```bash
-pip install -e sdk/python
+```python
+from animus_sdk import AnimusClient
+
+client = AnimusClient(
+    gateway_url="https://datapilot.example.com",
+    auth_token="...",
+)
+
+experiment = client.experiments.create_experiment(
+    name="baseline",
+    metadata={"team": "ml", "project": "fraud"},
+)
+
+dataset = client.datasets.get_dataset_version(
+    dataset_version_id="dataset-version-id",
+)
 ```
 
----
+`ExperimentsClient` and `DatasetRegistryClient` remain available directly for focused integrations.
 
-## Environment Variables
+## Environment variables
 
-* `ANIMUS_GATEWAY_URL` (default: `http://localhost:8080`)
-* `ANIMUS_AUTH_TOKEN` (optional, `Bearer` token for gateway auth)
-* `ANIMUS_CI_WEBHOOK_SECRET` (optional; required if using `post_ci_webhook`)
-* `DATAPILOT_URL` / `RUN_ID` / `TOKEN` (provided to training containers by Animus; used by `RunTelemetryLogger.from_env()`)
+- `ANIMUS_GATEWAY_URL` - DataPilot gateway URL. Defaults to `http://localhost:8080` for local development.
+- `ANIMUS_AUTH_TOKEN` - optional bearer token.
+- `ANIMUS_CI_WEBHOOK_SECRET` - HMAC secret for signed CI webhook/report calls.
+- `DATAPILOT_URL`, `RUN_ID`, `TOKEN` - execution-scoped values used by `RunTelemetryLogger.from_env()`.
 
----
-
-## Experiments Usage
+## Experiments and immutable run metadata
 
 ```python
 from animus_sdk import ExperimentsClient
 
-client = ExperimentsClient(gateway_url="http://localhost:8080")
+client = ExperimentsClient(gateway_url="https://datapilot.example.com")
 
 exp = client.create_experiment(
     name="baseline",
     description="Baseline training run",
-    metadata={"team": "ml", "project": "fraud"},
+    metadata={"team": "ml"},
 )
 
 run = client.create_run(
-    experiment_id=exp["experiment_id"],
-    dataset_version_id="YOUR_DATASET_VERSION_ID",
+    experiment_id=str(exp["experiment_id"]),
+    dataset_version_id="dataset-version-id",
     status="succeeded",
     params={"lr": 1e-3},
     metrics={"accuracy": 0.91},
 )
-
-client.post_ci_webhook(
-    payload={
-        "run_id": run["run_id"],
-        "provider": "github_actions",
-        "context": {"workflow": "train.yml", "job": "train"},
-    }
-)
 ```
 
----
+GitHub Actions, GitLab CI, Jenkins, and local git metadata are detected automatically when available.
 
-## CI image registration (signed)
-
-Register a built image digest. This binds experiment runs to the **git commit** and **container image** used during execution.
+## Signed CI provenance
 
 ```python
-import os
-
-from animus_sdk import ExperimentsClient
-
-client = ExperimentsClient(
-    gateway_url=os.environ.get("ANIMUS_GATEWAY_URL")
-)
-
 client.post_ci_report(
     payload={
         "image_digest": "sha256:...",
@@ -118,106 +94,98 @@ client.post_ci_report(
 )
 ```
 
----
+CI payload JSON is canonicalized and rejects non-standard values such as NaN/Infinity before signing.
 
-## Execute training run
+## Artifact upload and integrity-checked download
+
+Uploads are streamed instead of loading the artifact into memory.
 
 ```python
-from animus_sdk import ExperimentsClient
-
-client = ExperimentsClient(gateway_url="http://localhost:8080")
-
-resp = client.execute_run(
-    experiment_id="YOUR_EXPERIMENT_ID",
-    dataset_version_id="YOUR_DATASET_VERSION_ID",
-    image_ref="ghcr.io/acme/train@sha256:...",
+client.upload_run_artifact(
+    run_id="run-id",
+    kind="model",
+    file_path="/tmp/model.bin",
+    metadata={"format": "safetensors"},
 )
-
-print(resp["run_id"])
 ```
 
----
+Downloads are written to a temporary file in the destination directory, flushed, and atomically renamed only after completion. Optional size and digest constraints fail closed:
 
-## Live Telemetry (training containers)
+```python
+meta = client.download_run_artifact(
+    run_id="run-id",
+    artifact_id="artifact-id",
+    dest_path="/models/model.bin",
+    max_bytes=8 * 1024 * 1024 * 1024,
+    expected_sha256="0123456789abcdef" * 4,
+)
+```
 
-Training containers launched by Animus receive `DATAPILOT_URL`, `RUN_ID`, and `TOKEN` automatically.
-
-Use `RunTelemetryLogger` to emit **append‑only metrics and events** without blocking training execution.
+## Live telemetry
 
 ```python
 from animus_sdk import RunTelemetryLogger
 
-logger = RunTelemetryLogger.from_env(timeout_seconds=2.0)
-logger.log_status(status="starting")
+with RunTelemetryLogger.from_env(timeout_seconds=2.0) as telemetry:
+    telemetry.log_status(status="starting")
 
-for step in range(100):
-    loss = 1.0 / (step + 1)
-    logger.log_metric(step=step, name="loss", value=loss)
-    logger.log_progress(
-        step=step,
-        total_steps=100,
-        percent=(step + 1) / 100.0,
-    )
+    for step in range(100):
+        telemetry.log_metric(step=step, name="loss", value=1.0 / (step + 1))
+        telemetry.log_progress(
+            step=step,
+            total_steps=100,
+            percent=(step + 1) / 100.0,
+        )
 
-logger.log_status(status="finished")
-logger.close(flush=True, timeout_seconds=5.0)
+    telemetry.log_status(status="finished")
+    print(telemetry.stats)
 ```
 
----
+Telemetry is deliberately best-effort so an observability outage cannot crash training. `stats` exposes accepted, dropped, sent, failed, and retried counts.
 
-## Dataset download (training containers)
+## Error handling
 
 ```python
-import os
+from animus_sdk import AnimusAPIError
 
-from animus_sdk import DatasetRegistryClient
-
-datasets = DatasetRegistryClient(
-    gateway_url=os.environ["DATAPILOT_URL"],
-    auth_token=os.environ["TOKEN"],
-)
-
-datasets.download_dataset_version(
-    dataset_version_id=os.environ["DATASET_VERSION_ID"],
-    dest_path="/tmp/dataset.zip",
-)
+try:
+    client.experiments.get_run(run_id="run-id")
+except AnimusAPIError as exc:
+    print(exc.status, exc.code, exc.request_id)
+    if exc.retryable:
+        ...
 ```
 
----
+`retryable` describes transport/status retryability. Application-level retry safety still depends on operation semantics.
 
-## Run artifacts (training / evaluation containers)
+## Performance and binary strategy
 
-```python
-import os
+The SDK remains a universal **pure-Python wheel** intentionally. Its hot path is network and file I/O, so compiling the entire package with Cython/Nuitka would add platform-specific build and debugging cost without a justified end-to-end latency win.
 
-from animus_sdk import ExperimentsClient
+The production strategy is:
 
-exp = ExperimentsClient(
-    gateway_url=os.environ["DATAPILOT_URL"],
-    auth_token=os.environ["TOKEN"],
-)
+1. keep the public API typed and portable;
+2. stream large payloads instead of copying them into RAM;
+3. minimize allocations and use deterministic compact JSON;
+4. validate on CPython 3.10-3.14;
+5. introduce a Rust/PyO3 `abi3` native extension only when profiling identifies a CPU-bound kernel whose measured gain justifies the binary surface.
 
-exp.upload_run_artifact(
-    run_id=os.environ["RUN_ID"],
-    kind="model",
-    file_path="/tmp/model.json",
-    name="model",
-    metadata={"format": "json"},
-)
+This preserves one universal wheel today while keeping a clean path to native acceleration later.
+
+## Release model
+
+Releases use tags of the form:
+
+```text
+sdk-python-v1.1.0
 ```
 
----
+The release workflow verifies tests, lint, typing, package metadata, and the tag/version match before publishing. PyPI publishing is configured for OIDC Trusted Publishing with attestations; the PyPI project must have the repository workflow registered as a Trusted Publisher.
 
-## Design principles
+## Compatibility note
 
-* CI-first, non-interactive usage
-* deterministic identifiers
-* append-only telemetry
-* explicit dataset and run binding
-* compatible with on-prem and air-gapped deployments
-
----
+Python 3.10 remains supported in the 1.1 line for compatibility, but it reaches upstream end-of-life in October 2026. New deployments should prefer Python 3.12-3.14.
 
 ## License
 
-Apache-2.0
+Apache-2.0.

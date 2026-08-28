@@ -1,0 +1,123 @@
+name: Python SDK CI
+
+on:
+  pull_request:
+    paths:
+      - "python/**"
+      - ".github/workflows/ci-python-sdk.yml"
+      - ".github/workflows/release-python-sdk.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "python/**"
+      - ".github/workflows/ci-python-sdk.yml"
+      - ".github/workflows/release-python-sdk.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-sdk-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+
+    defaults:
+      run:
+        working-directory: python
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: python/pyproject.toml
+
+      - name: Install SDK and quality tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Compile
+        run: python -m compileall -q src
+
+      - name: Lint
+        run: python -m ruff check src tests
+
+      - name: Type check
+        run: python -m mypy src/animus_sdk
+
+      - name: Test
+        run: python -m pytest --cov=animus_sdk --cov-branch --cov-report=term-missing --cov-fail-under=70
+
+  platform-smoke:
+    name: ${{ matrix.os }} / Python 3.14
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+
+    defaults:
+      run:
+        working-directory: python
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: python -m pip install -e .
+      - run: python -m unittest discover -s tests -v
+
+  package:
+    name: Build and inspect distributions
+    runs-on: ubuntu-latest
+    needs: quality
+
+    defaults:
+      run:
+        working-directory: python
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "build>=1.2.2,<2" "twine>=6.1,<7"
+          python -m build
+          python -m twine check dist/*
+
+      - name: Install wheel smoke test
+        shell: bash
+        run: |
+          python -m venv .wheel-smoke
+          . .wheel-smoke/bin/activate
+          python -m pip install --no-deps dist/*.whl
+          python - <<'PY'
+          import animus_sdk
+          from animus_sdk import AnimusClient
+          assert animus_sdk.__version__
+          assert AnimusClient(gateway_url="https://example.invalid").gateway_url == "https://example.invalid"
+          print(animus_sdk.__version__)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: animus-datalab-dist
+          path: python/dist/*
+          if-no-files-found: error
