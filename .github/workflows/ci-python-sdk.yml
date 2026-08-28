@@ -116,7 +116,7 @@ jobs:
           print(animus_sdk.__version__)
           PY
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: animus-datalab-dist
           path: python/dist/*
