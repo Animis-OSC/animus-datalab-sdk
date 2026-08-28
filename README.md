@@ -4,15 +4,46 @@
 
 # Animus DataLab Python SDK
 
-Production-oriented, typed Python SDK for **Animus DataPilot** dataset, experiment, CI provenance, artifact, and live-training telemetry APIs.
+Typed, zero-runtime-dependency Python integration SDK for **Animus DataPilot / Animus DataLab**.
+
+> Product boundary: **Animus Link is a separate live managed-access product.** Animus DataLab is the governed ML infrastructure platform in the same Animus systems portfolio. This repository is the client-side integration layer for DataLab; it is not part of the Animus Link runtime.
+
+## Why this SDK exists
+
+DataLab deliberately separates authoritative platform state from workload execution. The Control Plane owns metadata, policy, lineage, audit and artifact mediation; training and CI workloads run outside that process boundary. Those workloads still need a small, dependable way to report evidence and consume governed inputs.
+
+This SDK is that boundary. It gives CI systems, training containers and operator tooling a stable Python projection of selected DataPilot gateway APIs without embedding DataLab server code or requiring a large dependency graph.
+
+Typical uses:
+
+- register and resolve datasets and immutable dataset versions;
+- create experiments and immutable run records;
+- dispatch an existing run to the Data Plane through the project-scoped execution API;
+- stream metrics, progress and status evidence from training workloads;
+- upload and download run artifacts without buffering whole files in memory;
+- submit signed CI provenance;
+- preserve request IDs and normalized failure semantics at the integration boundary.
+
+## Contract ownership
+
+**DataLab owns the API contracts. The SDK is a projection of those contracts.**
+
+The 1.2 release line targets these current DataLab contract families:
+
+- Dataset Registry API `0.2.x`;
+- Experiments API `0.3.x`.
+
+The canonical OpenAPI definitions live in the `animus-ml-datalab` repository under `core/contracts/openapi/`. SDK changes that affect HTTP paths, payloads or compatibility must be validated against those definitions before release.
+
+`ExperimentsClient.execute_run()` remains available for compatibility, but DataLab marks `/experiments/runs:execute` as legacy. New integrations should create/resolve a run and use the project-scoped `dispatch_run()` API.
 
 ## Design goals
 
-- **Zero runtime dependencies** by default: deploy cleanly into CI, training images, on-prem, and air-gapped environments.
+- **Zero runtime dependencies** by default: deploy cleanly into CI, training images, on-prem and air-gapped environments.
 - **Bounded and integrity-aware I/O**: streaming uploads/downloads, atomic downloads, optional SHA-256 verification, bounded JSON/error bodies.
 - **Predictable failure semantics**: normalized `AnimusAPIError`, stable request IDs, explicit validation instead of optimization-removable `assert` checks.
 - **Typed distribution**: PEP 561 `py.typed` marker and Python 3.10-3.14 compatibility.
-- **Non-blocking telemetry**: bounded background queue, retry with jitter, stable request IDs across retries, and observable delivery counters.
+- **Non-blocking telemetry**: bounded background queue, retry with jitter, stable request IDs across retries and observable delivery counters.
 - **Supply-chain ready**: build verification on every change and PyPI Trusted Publishing/attestations on release.
 
 ## Install
@@ -37,13 +68,19 @@ client = AnimusClient(
     auth_token="...",
 )
 
+project = client.datasets.create_project(
+    name="fraud-ml",
+    idempotency_key="project-fraud-ml-v1",
+)
+
+dataset = client.datasets.create_dataset(
+    name="fraud-training",
+    metadata={"owner": "ml"},
+)
+
 experiment = client.experiments.create_experiment(
     name="baseline",
     metadata={"team": "ml", "project": "fraud"},
-)
-
-dataset = client.datasets.get_dataset_version(
-    dataset_version_id="dataset-version-id",
 )
 ```
 
@@ -56,29 +93,54 @@ dataset = client.datasets.get_dataset_version(
 - `ANIMUS_CI_WEBHOOK_SECRET` - HMAC secret for signed CI webhook/report calls.
 - `DATAPILOT_URL`, `RUN_ID`, `TOKEN` - execution-scoped values used by `RunTelemetryLogger.from_env()`.
 
-## Experiments and immutable run metadata
+## Dataset lifecycle
+
+```python
+from animus_sdk import DatasetRegistryClient
+
+client = DatasetRegistryClient(gateway_url="https://datapilot.example.com")
+
+client.create_dataset(
+    name="fraud-training",
+    metadata={"owner": "ml"},
+    idempotency_key="dataset-fraud-training-v1",
+)
+
+version = client.upload_dataset_version(
+    dataset_id="dataset-id",
+    file_path="/data/train.zip",
+    metadata={"source": "warehouse", "snapshot": "2026-08-28"},
+    quality_rule_id="quality-rule-id",
+    idempotency_key="dataset-version-2026-08-28",
+)
+```
+
+Uploads are streamed; dataset downloads can be size-bounded and SHA-256 verified before the destination is atomically replaced.
+
+## Experiments and canonical execution
 
 ```python
 from animus_sdk import ExperimentsClient
 
 client = ExperimentsClient(gateway_url="https://datapilot.example.com")
 
-exp = client.create_experiment(
-    name="baseline",
-    description="Baseline training run",
-    metadata={"team": "ml"},
+run = client.create_run(
+    experiment_id="experiment-id",
+    dataset_version_id="dataset-version-id",
+    status="pending",
+    params={"lr": 1e-3},
 )
 
-run = client.create_run(
-    experiment_id=str(exp["experiment_id"]),
-    dataset_version_id="dataset-version-id",
-    status="succeeded",
-    params={"lr": 1e-3},
-    metrics={"accuracy": 0.91},
+client.dispatch_run(
+    project_id="project-id",
+    run_id=str(run["run_id"]),
+    idempotency_key="dispatch-build-123",
 )
 ```
 
-GitHub Actions, GitLab CI, Jenkins, and local git metadata are detected automatically when available.
+The project-scoped dispatch API is the canonical Control Plane → Data Plane boundary in the current Experiments contract. `execute_run()` is retained only for legacy compatibility.
+
+Read surfaces include experiment/run listing, execution records, immutable build context and metric samples.
 
 ## Signed CI provenance
 
@@ -141,7 +203,7 @@ with RunTelemetryLogger.from_env(timeout_seconds=2.0) as telemetry:
     print(telemetry.stats)
 ```
 
-Telemetry is deliberately best-effort so an observability outage cannot crash training. `stats` exposes accepted, dropped, sent, failed, and retried counts.
+Telemetry is deliberately best-effort so an observability outage cannot crash training. `stats` exposes accepted, dropped, sent, failed and retried counts.
 
 ## Error handling
 
@@ -156,11 +218,11 @@ except AnimusAPIError as exc:
         ...
 ```
 
-`retryable` describes transport/status retryability. Application-level retry safety still depends on operation semantics.
+`retryable` describes transport/status retryability. Application-level retry safety still depends on operation semantics and idempotency guarantees.
 
 ## Performance and binary strategy
 
-The SDK remains a universal **pure-Python wheel** intentionally. Its hot path is network and file I/O, so compiling the entire package with Cython/Nuitka would add platform-specific build and debugging cost without a justified end-to-end latency win.
+The SDK remains a universal **pure-Python wheel** intentionally. Its dominant paths are network and file I/O, so compiling the entire package with Cython/Nuitka would add platform-specific build and debugging cost without a justified end-to-end latency gain.
 
 The production strategy is:
 
@@ -170,21 +232,21 @@ The production strategy is:
 4. validate on CPython 3.10-3.14;
 5. introduce a Rust/PyO3 `abi3` native extension only when profiling identifies a CPU-bound kernel whose measured gain justifies the binary surface.
 
-This preserves one universal wheel today while keeping a clean path to native acceleration later.
+## Compatibility
+
+SDK `1.2.x` is an additive compatibility line over DataLab Dataset Registry `0.2.x` and Experiments `0.3.x`. See `docs/COMPATIBILITY.md` for the compatibility policy and `docs/ARCHITECTURE.md` for the system boundary.
+
+Python 3.10 remains supported in the 1.2 line for compatibility, but reaches upstream end-of-life in October 2026. New deployments should prefer Python 3.12-3.14.
 
 ## Release model
 
 Releases use tags of the form:
 
 ```text
-sdk-python-v1.1.0
+sdk-python-v1.2.0
 ```
 
-The release workflow verifies tests, lint, typing, package metadata, and the tag/version match before publishing. PyPI publishing is configured for OIDC Trusted Publishing with attestations; the PyPI project must have the repository workflow registered as a Trusted Publisher.
-
-## Compatibility note
-
-Python 3.10 remains supported in the 1.1 line for compatibility, but it reaches upstream end-of-life in October 2026. New deployments should prefer Python 3.12-3.14.
+The release workflow verifies compile, Ruff, mypy, tests/branch coverage, package metadata and tag/version identity before publishing. Publication uses PyPI OIDC Trusted Publishing with attestations. See `RELEASING.md`.
 
 ## License
 
