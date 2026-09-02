@@ -20,7 +20,7 @@ Typical uses:
 - create experiments and immutable run records;
 - dispatch a run through project-scoped execution APIs;
 - stream metrics, progress and status evidence;
-- upload/download run artifacts with bounded streaming I/O;
+- stream artifact uploads and optionally bound artifact downloads;
 - submit signed CI provenance;
 - preserve request IDs and normalized failure semantics.
 
@@ -28,7 +28,7 @@ Typical uses:
 
 **DataLab owns the API contracts; the SDK is a projection of those contracts.**
 
-The 1.2 release line targets the current contract families documented by DataLab, including Dataset Registry `0.2.x` and Experiments `0.3.x`. Canonical OpenAPI lives in `Animus-OSC/animus-ml-datalab` under `core/contracts/openapi/`.
+The 1.2 release line targets the current contract families documented by DataLab, including Dataset Registry `0.2.x` and Experiments `0.3.x`. DataLab owns the canonical OpenAPI definitions under its contract source.
 
 SDK changes affecting paths, payloads or compatibility must be validated against those definitions before release.
 
@@ -96,7 +96,7 @@ RUN_ID
 TOKEN
 ```
 
-Do not bake production bearer tokens, webhook secrets or execution tokens into images, examples, notebooks or repository files. Runtime injection remains the responsibility of the deployment/workload boundary.
+`DATAPILOT_URL`, `RUN_ID` and `TOKEN` are compatibility inputs for `RunTelemetryLogger.from_env()`; `TOKEN` is a bearer token. `ANIMUS_CI_WEBHOOK_SECRET` is used to sign CI reports/webhooks. Do not bake production bearer tokens, webhook secrets or execution tokens into images, examples, notebooks or repository files. Runtime injection remains the responsibility of the deployment/workload boundary.
 
 ## Dataset lifecycle
 
@@ -261,9 +261,9 @@ The SDK should remain a **small projection**, not a shadow control plane:
 
 ## Related
 
-- [`Animus-OSC/animus-ml-datalab`](https://github.com/Animus-OSC/animus-ml-datalab) — canonical DataLab platform/contracts.
-- [`Animus-OSC/link`](https://github.com/Animus-OSC/link) — separate secure-connectivity protocol/runtime.
-- [`kapakka.org`](https://kapakka.org) — public Animus systems/research entry point.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — SDK and DataLab system boundary.
+- [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md) — contract and SDK compatibility policy.
+- [`SECURITY.md`](SECURITY.md) — security reporting and boundary.
 
 ---
 
