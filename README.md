@@ -1,50 +1,47 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/grewanderer/animus-datalab-sdk/main/assets/banner.png" width="100%" alt="Animus DataLab">
+  <img src="assets/readme-hero.svg" width="100%" alt="Animus DataLab Python SDK — typed client, bounded I/O and reproducible evidence" />
 </p>
 
 # Animus DataLab Python SDK
 
-Typed, zero-runtime-dependency Python integration SDK for **Animus DataPilot / Animus DataLab**.
+**Typed, zero-runtime-dependency Python integration SDK for Animus DataPilot / Animus DataLab.**
 
-> Product boundary: **Animus Link is a separate live managed-access product.** Animus DataLab is the governed ML infrastructure platform in the same Animus systems portfolio. This repository is the client-side integration layer for DataLab; it is not part of the Animus Link runtime.
+> **Product boundary:** Animus Link is a separate secure-connectivity system. DataLab is the governed ML/research infrastructure platform in the same Animus portfolio. This repository is the client-side DataLab integration layer; it is not part of the Link runtime and does not execute untrusted workloads itself.
 
 ## Why this SDK exists
 
-DataLab deliberately separates authoritative platform state from workload execution. The Control Plane owns metadata, policy, lineage, audit and artifact mediation; training and CI workloads run outside that process boundary. Those workloads still need a small, dependable way to report evidence and consume governed inputs.
+DataLab separates authoritative platform state from workload execution. The **Control Plane** owns metadata, policy, lineage, audit and artifact mediation; the **Data Plane** runs isolated workloads. CI, training containers and operator tooling still need a small, predictable way to consume governed inputs and report evidence without embedding DataLab server code.
 
-This SDK is that boundary. It gives CI systems, training containers and operator tooling a stable Python projection of selected DataPilot gateway APIs without embedding DataLab server code or requiring a large dependency graph.
+This SDK provides that boundary.
 
 Typical uses:
 
-- register and resolve datasets and immutable dataset versions;
+- register/resolve datasets and immutable dataset versions;
 - create experiments and immutable run records;
-- dispatch an existing run to the Data Plane through the project-scoped execution API;
-- stream metrics, progress and status evidence from training workloads;
-- upload and download run artifacts without buffering whole files in memory;
+- dispatch a run through project-scoped execution APIs;
+- stream metrics, progress and status evidence;
+- upload/download run artifacts with bounded streaming I/O;
 - submit signed CI provenance;
-- preserve request IDs and normalized failure semantics at the integration boundary.
+- preserve request IDs and normalized failure semantics.
 
 ## Contract ownership
 
-**DataLab owns the API contracts. The SDK is a projection of those contracts.**
+**DataLab owns the API contracts; the SDK is a projection of those contracts.**
 
-The 1.2 release line targets these current DataLab contract families:
+The 1.2 release line targets the current contract families documented by DataLab, including Dataset Registry `0.2.x` and Experiments `0.3.x`. Canonical OpenAPI lives in `Animus-OSC/animus-ml-datalab` under `core/contracts/openapi/`.
 
-- Dataset Registry API `0.2.x`;
-- Experiments API `0.3.x`.
+SDK changes affecting paths, payloads or compatibility must be validated against those definitions before release.
 
-The canonical OpenAPI definitions live in the `animus-ml-datalab` repository under `core/contracts/openapi/`. SDK changes that affect HTTP paths, payloads or compatibility must be validated against those definitions before release.
-
-`ExperimentsClient.execute_run()` remains available for compatibility, but DataLab marks `/experiments/runs:execute` as legacy. New integrations should create/resolve a run and use the project-scoped `dispatch_run()` API.
+`ExperimentsClient.execute_run()` remains for compatibility where supported, while new integrations should prefer project-scoped dispatch through `dispatch_run()`.
 
 ## Design goals
 
-- **Zero runtime dependencies** by default: deploy cleanly into CI, training images, on-prem and air-gapped environments.
-- **Bounded and integrity-aware I/O**: streaming uploads/downloads, atomic downloads, optional SHA-256 verification, bounded JSON/error bodies.
-- **Predictable failure semantics**: normalized `AnimusAPIError`, stable request IDs, explicit validation instead of optimization-removable `assert` checks.
-- **Typed distribution**: PEP 561 `py.typed` marker and Python 3.10-3.14 compatibility.
-- **Non-blocking telemetry**: bounded background queue, retry with jitter, stable request IDs across retries and observable delivery counters.
-- **Supply-chain ready**: build verification on every change and PyPI Trusted Publishing/attestations on release.
+- **Zero runtime dependencies by default** — suitable for CI, training images, on-prem and air-gapped environments.
+- **Bounded, integrity-aware I/O** — streaming upload/download, atomic replacement and optional SHA-256 verification.
+- **Predictable failures** — normalized `AnimusAPIError`, stable request IDs and explicit validation.
+- **Typed distribution** — PEP 561 `py.typed` marker and supported Python-version matrix defined by the package/release metadata.
+- **Non-blocking telemetry** — bounded background queue, retry/jitter, stable request IDs and observable delivery counters.
+- **Supply-chain-ready release path** — build verification and release provenance/attestation controls.
 
 ## Install
 
@@ -52,7 +49,7 @@ The canonical OpenAPI definitions live in the `animus-ml-datalab` repository und
 pip install animus-datalab
 ```
 
-Development from the repository root:
+Development:
 
 ```bash
 python -m pip install -e "python[dev]"
@@ -84,14 +81,22 @@ experiment = client.experiments.create_experiment(
 )
 ```
 
-`ExperimentsClient` and `DatasetRegistryClient` remain available directly for focused integrations.
+Focused `ExperimentsClient` and `DatasetRegistryClient` clients remain available when the unified client is unnecessary.
 
-## Environment variables
+## Environment
 
-- `ANIMUS_GATEWAY_URL` - DataPilot gateway URL. Defaults to `http://localhost:8080` for local development.
-- `ANIMUS_AUTH_TOKEN` - optional bearer token.
-- `ANIMUS_CI_WEBHOOK_SECRET` - HMAC secret for signed CI webhook/report calls.
-- `DATAPILOT_URL`, `RUN_ID`, `TOKEN` - execution-scoped values used by `RunTelemetryLogger.from_env()`.
+Common integration variables include:
+
+```text
+ANIMUS_GATEWAY_URL
+ANIMUS_AUTH_TOKEN
+ANIMUS_CI_WEBHOOK_SECRET
+DATAPILOT_URL
+RUN_ID
+TOKEN
+```
+
+Do not bake production bearer tokens, webhook secrets or execution tokens into images, examples, notebooks or repository files. Runtime injection remains the responsibility of the deployment/workload boundary.
 
 ## Dataset lifecycle
 
@@ -115,9 +120,9 @@ version = client.upload_dataset_version(
 )
 ```
 
-Uploads are streamed; dataset downloads can be size-bounded and SHA-256 verified before the destination is atomically replaced.
+Uploads stream from disk. Downloads can be size-bounded and SHA-256 verified before the destination is atomically replaced.
 
-## Experiments and canonical execution
+## Experiments and execution
 
 ```python
 from animus_sdk import ExperimentsClient
@@ -138,9 +143,7 @@ client.dispatch_run(
 )
 ```
 
-The project-scoped dispatch API is the canonical Control Plane → Data Plane boundary in the current Experiments contract. `execute_run()` is retained only for legacy compatibility.
-
-Read surfaces include experiment/run listing, execution records, immutable build context and metric samples.
+The SDK requests execution through DataLab; it is not itself the Data Plane and does not gain Kubernetes/host authority merely because it can request a run.
 
 ## Signed CI provenance
 
@@ -156,11 +159,11 @@ client.post_ci_report(
 )
 ```
 
-CI payload JSON is canonicalized and rejects non-standard values such as NaN/Infinity before signing.
+CI payloads are canonicalized and reject non-standard JSON values such as NaN/Infinity before signing.
 
-## Artifact upload and integrity-checked download
+## Artifact I/O
 
-Uploads are streamed instead of loading the artifact into memory.
+Uploads are streamed rather than buffered as one in-memory object:
 
 ```python
 client.upload_run_artifact(
@@ -171,7 +174,7 @@ client.upload_run_artifact(
 )
 ```
 
-Downloads are written to a temporary file in the destination directory, flushed, and atomically renamed only after completion. Optional size and digest constraints fail closed:
+Integrity-checked download:
 
 ```python
 meta = client.download_run_artifact(
@@ -182,6 +185,8 @@ meta = client.download_run_artifact(
     expected_sha256="0123456789abcdef" * 4,
 )
 ```
+
+The SDK writes to a temporary file and atomically replaces the destination only after the configured integrity checks pass.
 
 ## Live telemetry
 
@@ -203,7 +208,7 @@ with RunTelemetryLogger.from_env(timeout_seconds=2.0) as telemetry:
     print(telemetry.stats)
 ```
 
-Telemetry is deliberately best-effort so an observability outage cannot crash training. `stats` exposes accepted, dropped, sent, failed and retried counts.
+Telemetry is deliberately best-effort: an observability outage should not crash the training workload. Delivery counters make drops/retries/failures visible.
 
 ## Error handling
 
@@ -218,36 +223,48 @@ except AnimusAPIError as exc:
         ...
 ```
 
-`retryable` describes transport/status retryability. Application-level retry safety still depends on operation semantics and idempotency guarantees.
+Application code should distinguish retryable transport/service failure from policy/validation failure rather than blindly retrying every error.
 
-## Performance and binary strategy
+## Repository map
 
-The SDK remains a universal **pure-Python wheel** intentionally. Its dominant paths are network and file I/O, so compiling the entire package with Cython/Nuitka would add platform-specific build and debugging cost without a justified end-to-end latency gain.
+- `python/` — Python package and tests.
+- `docs/` — integration, contract and operational documentation.
+- `assets/` — repository-owned visual assets.
+- `CHANGELOG.md` — release history.
+- `RELEASING.md` — release process.
+- `SECURITY.md` — reporting and security boundary.
+- `LICENSE` — license terms.
 
-The production strategy is:
+## Development and verification
 
-1. keep the public API typed and portable;
-2. stream large payloads instead of copying them into RAM;
-3. minimize allocations and use deterministic compact JSON;
-4. validate on CPython 3.10-3.14;
-5. introduce a Rust/PyO3 `abi3` native extension only when profiling identifies a CPU-bound kernel whose measured gain justifies the binary surface.
+Use the package metadata and current workflows for the exact supported toolchain. A typical development gate includes package installation, lint/type checks, tests and build verification. Release candidates must also preserve compatibility with the DataLab OpenAPI contract they claim to target.
 
-## Compatibility
+A useful local flow is:
 
-SDK `1.2.x` is an additive compatibility line over DataLab Dataset Registry `0.2.x` and Experiments `0.3.x`. See `docs/COMPATIBILITY.md` for the compatibility policy and `docs/ARCHITECTURE.md` for the system boundary.
-
-Python 3.10 remains supported in the 1.2 line for compatibility, but reaches upstream end-of-life in October 2026. New deployments should prefer Python 3.12-3.14.
-
-## Release model
-
-Releases use tags of the form:
-
-```text
-sdk-python-v1.2.0
+```bash
+python -m pip install -e "python[dev]"
+pytest
 ```
 
-The release workflow verifies compile, Ruff, mypy, tests/branch coverage, package metadata and tag/version identity before publishing. Publication uses PyPI OIDC Trusted Publishing with attestations. See `RELEASING.md`.
+Do not treat a locally successful mock as evidence that a production DataLab endpoint, runner or artifact store is configured.
 
-## License
+## Security boundary
 
-Apache-2.0.
+The SDK should remain a **small projection**, not a shadow control plane:
+
+- it does not decide RBAC/policy;
+- it does not execute arbitrary workloads on its own;
+- it does not turn bearer tokens into long-lived stored identity;
+- it does not make model output authoritative;
+- it does not weaken server-side validation because a typed client produced the request;
+- it should fail closed on integrity/validation conditions that protect local artifacts.
+
+## Related
+
+- [`Animus-OSC/animus-ml-datalab`](https://github.com/Animus-OSC/animus-ml-datalab) — canonical DataLab platform/contracts.
+- [`Animus-OSC/link`](https://github.com/Animus-OSC/link) — separate secure-connectivity protocol/runtime.
+- [`kapakka.org`](https://kapakka.org) — public Animus systems/research entry point.
+
+---
+
+<sub>ANIMUS DATALAB SDK · small client surface · authoritative server contracts · reproducible evidence</sub>
