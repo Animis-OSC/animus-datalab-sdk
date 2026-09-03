@@ -211,6 +211,10 @@ SDK `1.2.x` is an additive compatibility line over DataLab Dataset Registry `0.2
 
 Python 3.10 remains supported in the 1.2 line for compatibility, but reaches upstream end-of-life in October 2026. New deployments should prefer Python 3.12-3.14.
 
+## Contributing and security
+
+Before changing public contracts or security-sensitive behavior, read the repository-level [`CONTRIBUTING.md`](../CONTRIBUTING.md) and [`SECURITY.md`](../SECURITY.md). Vulnerabilities should use GitHub's private security-advisory flow rather than a public issue.
+
 ## License
 
 Apache-2.0.
