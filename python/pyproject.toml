@@ -37,11 +37,11 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/grewanderer/animus-datalab-sdk"
-Documentation = "https://github.com/grewanderer/animus-datalab-sdk#readme"
-Repository = "https://github.com/grewanderer/animus-datalab-sdk"
-Changelog = "https://github.com/grewanderer/animus-datalab-sdk/blob/main/CHANGELOG.md"
-Issues = "https://github.com/grewanderer/animus-datalab-sdk/issues"
+Homepage = "https://github.com/Animus-OSC/animus-datalab-sdk"
+Documentation = "https://github.com/Animus-OSC/animus-datalab-sdk#readme"
+Repository = "https://github.com/Animus-OSC/animus-datalab-sdk"
+Changelog = "https://github.com/Animus-OSC/animus-datalab-sdk/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Animus-OSC/animus-datalab-sdk/issues"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
